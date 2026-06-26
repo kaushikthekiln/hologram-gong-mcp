@@ -1,0 +1,12 @@
+# Local-only secrets for `wrangler dev` (this Worker reading them at runtime)
+# Copy to `.dev.vars` and fill in real values; .dev.vars is gitignored.
+# These same names get pushed as Worker secrets in production via `wrangler secret put`.
+
+DATABASE_URL=postgres://gong_mcp_reader.yxcnocxjqvlgtlwbwjpl:<pw>@aws-1-us-east-1.pooler.supabase.com:6543/postgres
+GOOGLE_CLIENT_ID=233570257600-<rest>.apps.googleusercontent.com
+GOOGLE_CLIENT_SECRET=GOCSPX-<rest>
+COOKIE_ENCRYPTION_KEY=<openssl rand -hex 32>
+SF_USERNAME=mathias.powell@hologram.io
+SF_PASSWORD=<mathias-sf-password>
+SF_SECURITY_TOKEN=<sf-security-token>
+SF_LOGIN_URL=https://login.salesforce.com

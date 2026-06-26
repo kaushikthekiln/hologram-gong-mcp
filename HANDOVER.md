@@ -1,6 +1,6 @@
 # Cloudflare Workers + Remote MCP Server — Handover Brief
 
-Use this when you want to build another Claude.ai-compatible MCP server (i.e. a custom connector that any user can paste a URL into) backed by Cloudflare Workers. This is the playbook from a real working build (Hologram-Gong: ~8,000 sales call transcripts in Supabase, exposed as a 7-tool MCP at `https://hologramgong.soft-mountain-985d.workers.dev/sse`).
+Use this when you want to build another Claude.ai-compatible MCP server (i.e. a custom connector that any user can paste a URL into) backed by Cloudflare Workers. This is the playbook from a real working build (Hologram-Gong: ~8,000 sales call transcripts in Supabase, exposed as a 7-tool MCP at `https://hologramgong.mathias-powell.workers.dev/sse`).
 
 ---
 
@@ -688,7 +688,7 @@ const rows = await sql`
 
 | Component | Value / Path |
 |---|---|
-| MCP URL | `https://hologramgong.soft-mountain-985d.workers.dev/sse` |
+| MCP URL | `https://hologramgong.mathias-powell.workers.dev/sse` |
 | Cloudflare account | Tech@thekiln.com (id `df3100885198fe59a4bf09a03017a811`) |
 | Worker code | `kkbuilds/current-clients/hologram/gong-mcp/src/index.ts` |
 | Wrangler config | `kkbuilds/current-clients/hologram/gong-mcp/wrangler.toml` |

@@ -1,127 +1,192 @@
 # Hologram Gong MCP
 
-Remote MCP server that lets Hologram employees chat with their Gong call transcripts from Claude.ai (web). Hosted on Cloudflare Workers. Gated to `@hologram.io` and `@thekiln.com` Google Workspace accounts via OAuth.
+The complete source + handover materials for the Hologram Gong + Salesforce MCP system. This is the canonical home for the code, infrastructure config, and operational documentation.
 
-## How end users connect
+Last verified working end-to-end: **2026-06-26**
 
-1. Open https://claude.ai
-2. Settings → Connectors → **Add custom connector**
-3. **Name**: anything readable (e.g. `Hologram Gong`)
-4. **Remote MCP server URL**: `https://hologramgong.soft-mountain-985d.workers.dev/sse`
-5. Leave OAuth fields blank
-6. Click **Add**
-7. Sign in with your `@hologram.io` or `@thekiln.com` Google account when prompted
-8. Done. Start chatting in any new Claude.ai conversation.
+---
 
-## Tools exposed
+## What this is, in one paragraph
 
-| Tool | Purpose |
+Hologram has thousands of Gong sales calls (Feb 2024 → today). Those calls (with full transcripts) are mirrored into a Hologram-owned Supabase Postgres database. A small Cloudflare Worker exposes that database — plus Hologram's live Salesforce data — as an MCP (Model Context Protocol) server. Anyone at Hologram can paste a single URL into Claude.ai's "Custom Connectors" dialog, sign in with Google, and start asking natural-language questions like "show me the last 5 pricing calls" or "what's the full Salesforce context on Signify?" A second Cloudflare Worker runs daily to keep the Gong call mirror fresh automatically.
+
+---
+
+## Live URLs
+
+| Thing | URL |
 |---|---|
-| `list_calls` | List calls with date range / rep / direction filters and pagination (max 500) |
-| `search_calls` | Keyword (ILIKE) search over title + transcript |
-| `count_calls` | Aggregate count for any window + filter |
-| `list_top_reps` | Top primary_user_ids by call count |
-| `get_transcript` | Full transcript + metadata for one call_id |
-| `query_database` | SELECT-only escape hatch (capped at 500 rows, 30s timeout) |
-| `describe_schema` | Returns column shape of both Gong tables |
+| **MCP custom connector URL** (paste into claude.ai) | `https://hologramgong.mathias-powell.workers.dev/sse` |
+| MCP Worker health check | `https://hologramgong.mathias-powell.workers.dev/` |
+| Daily auto-sync Worker | `https://gong-fetcher.mathias-powell.workers.dev/` |
+| Daily auto-sync manual trigger | `https://gong-fetcher.mathias-powell.workers.dev/run` |
 
-## Architecture
+---
+
+## How a Hologram user adds the connector to claude.ai
+
+1. Open https://claude.ai → Settings → **Connectors** → **Add custom connector**
+2. Name: `Hologram Gong + SF` (or whatever's readable)
+3. Remote MCP server URL: `https://hologramgong.mathias-powell.workers.dev/sse`
+4. Leave OAuth fields blank → click **Add**
+5. Open a new chat → enable the connector from the tools menu
+6. When prompted, sign in with Google using your `@hologram.io` account
+7. Verify you see **12 tools** (7 Gong + 5 Salesforce). If fewer, disconnect and re-add.
+
+---
+
+## Repository layout
 
 ```
-Claude.ai (web)
-   |  HTTPS + JSON-RPC 2.0 (MCP Streamable HTTP transport)
-   v
-Cloudflare Worker (this code)
-   |  Google OAuth gate (hd claim check for hologram.io / thekiln.com)
-   |  Reads env.DATABASE_URL secret
-   v
-Supabase Postgres pooler (Supavisor, transaction mode)
-   |  gong_mcp_reader role (SELECT-only on the 2 gong tables)
-   v
-Tables: public.gong_calls + public.gong_call_list
+hologram-gong-mcp/
+├── README.md                  ← this file
+├── HANDOVER.md                ← architecture, deploy guide, migration history
+├── CREDENTIALS.md             ← inventory of every secret + how to rotate
+├── backfill_gong.py           ← Python script for one-shot or big-window backfills
+├── gong-mcp/                  ← the MCP Worker (12 tools)
+│   ├── README.md
+│   ├── src/index.ts           ← Cloudflare Worker entry, 7 Gong tools + OAuth
+│   ├── src/sf.ts              ← 5 Salesforce tools (SOAP login + REST API v66)
+│   ├── wrangler.toml
+│   ├── package.json
+│   └── ...
+├── gong-fetcher/              ← the daily auto-sync Worker
+│   ├── README.md
+│   ├── src/index.ts           ← scheduled handler, fires daily at 07:00 EST
+│   ├── wrangler.toml
+│   ├── package.json
+│   └── ...
+└── sf-connected-app/          ← Salesforce Connected App metadata (for future JWT migration)
+    ├── sfdx-project.json
+    └── force-app/main/default/externalClientApplications/HologramGongMCP.externalClientApplication-meta.xml
 ```
 
-The Worker is stateless: no data lives in it, no AI runs in it. It's a JSON-RPC dispatcher that turns Claude.ai tool calls into SQL queries against an existing Supabase mirror of Gong call data.
+---
 
-## Local development
+## Architecture (one diagram)
+
+```
+Claude.ai (browser)
+   │  HTTPS + JSON-RPC 2.0 (MCP Streamable HTTP)
+   │  OAuth 2.1 with Google IdP, gated to @hologram.io + @thekiln.com via hd claim
+   ▼
+gong-mcp Worker  hologramgong.mathias-powell.workers.dev
+   │  CF account: Mathias.powell@hologram.io (id fbaa804209ab68a25daccf0076477227)
+   │  Source: gong-mcp/src/
+   │  KV: OAUTH_KV (token cache)
+   │  Secrets: DATABASE_URL, GOOGLE_CLIENT_ID/SECRET, SF_*, COOKIE_ENCRYPTION_KEY
+   │
+   ├─→ Supabase Postgres pooler (read-only)
+   │     aws-1-us-east-1.pooler.supabase.com:6543
+   │     Auth: gong_mcp_reader role (SELECT on gong tables only)
+   │     Project: yxcnocxjqvlgtlwbwjpl ("Gong + Supabase MCP", Hologram-owned)
+   │     Tables: public.gong_calls + public.gong_call_list
+   │
+   └─→ Salesforce REST API v66 (live, read-only)
+         Auth: SOAP login as mathias.powell@hologram.io, session cached in KV
+         Org: production (id 00D1I0000002wiYUAQ)
+
+   ┌────────────────────────────────────────────┐
+   │ DAILY 07:00 EST (12:00 UTC) cron trigger   │
+   └────────────────────────────────────────────┘
+       │
+       ▼
+gong-fetcher Worker  gong-fetcher.mathias-powell.workers.dev
+   │  Same CF account
+   │  Source: gong-fetcher/src/
+   │  Secrets: GONG_BASIC_AUTH, DATABASE_URL (writer role)
+   │
+   ├─→ Gong API us-47719.app.gong.io
+   │     GET /v2/calls + POST /v2/calls/transcript
+   │
+   └─→ Supabase Postgres (write)
+         Auth: gong_writer role (INSERT/UPDATE/SELECT on gong tables only)
+         Upserts into public.gong_calls + public.gong_call_list on call_id
+```
+
+---
+
+## The 12 tools
+
+| # | Tool | What it does |
+|---|---|---|
+| 1 | `list_calls` | List Gong calls with date range / rep / direction filters and pagination (max 500 per call) |
+| 2 | `search_calls` | Keyword (ILIKE) search over title + transcript with date range + pagination |
+| 3 | `count_calls` | Aggregate counts for any window + filter |
+| 4 | `list_top_reps` | Top primary_user_ids by call count |
+| 5 | `get_transcript` | Full transcript + metadata for one call_id |
+| 6 | `query_database` | SELECT-only escape hatch (capped at 500 rows, 30s statement timeout) |
+| 7 | `describe_schema` | Returns column shape of both gong tables |
+| 8 | `get_sf_account` | Lookup Salesforce Account by name / domain / id, returns candidates with match_confidence |
+| 9 | `list_sf_opportunities_for_account` | Open + recent closed deals for an SF Account, joined with OpportunityContactRole |
+| 10 | `list_sf_activity_for_account` | Tasks + Events in parallel, 90-day default window |
+| 11 | `list_sf_contacts_for_account` | Contacts at an Account + their open-deal roles |
+| 12 | `get_call_with_sf_context` | Cross-system join: Gong call_id → title-parsed company → SF Account + opps + activity |
+
+---
+
+## Data freshness
+
+- **Gong calls**: synced **daily at 07:00 EST** (12:00 UTC) via the gong-fetcher Worker. Calls land in the database within ~24 hours of happening, typically faster.
+- **Salesforce**: read **live** on every tool call (no caching beyond the 30-min auth session in KV). Always current.
+
+If you need to force a fresh sync (e.g., before a meeting where today's morning calls matter):
 
 ```bash
-npm install
-cp .env.example .env                # fill in real values
-cp .dev.vars.example .dev.vars      # fill in DATABASE_URL
-npx wrangler dev                    # runs locally on http://localhost:8787
+curl -s https://gong-fetcher.mathias-powell.workers.dev/run | python3 -m json.tool
 ```
 
-## Deploy
+That triggers an immediate sync and returns a JSON summary of what was pulled.
 
-```bash
-# First-time: install Wrangler globally OR rely on `npx wrangler`
-export CLOUDFLARE_API_TOKEN=cfat_...
-export CLOUDFLARE_ACCOUNT_ID=...
+---
 
-# Push production secrets (one-time, or whenever they rotate)
-echo -n "postgres://..." | npx wrangler secret put DATABASE_URL
-echo -n "<google_client_id>" | npx wrangler secret put GOOGLE_CLIENT_ID
-echo -n "<google_client_secret>" | npx wrangler secret put GOOGLE_CLIENT_SECRET
-echo -n "<random_32_byte_hex>" | npx wrangler secret put COOKIE_ENCRYPTION_KEY
+## Deploying changes
 
-# Deploy code
-npx wrangler deploy
+Each Worker is independently deployable. See per-folder READMEs:
 
-# Watch live logs
-npx wrangler tail
-```
+- `gong-mcp/README.md` — deploy the MCP Worker (after editing tools or auth logic)
+- `gong-fetcher/README.md` — deploy the auto-sync Worker (after editing cron schedule or sync logic)
 
-## How the Gong mirror gets refreshed
+Both Workers live on Hologram's own Cloudflare account (`fbaa804209ab68a25daccf0076477227`). Whoever owns this post-handover needs:
 
-`backfill_gong.py` is a Python script that pulls calls from Gong's API and upserts them into Supabase. Idempotent (safe to re-run). Detects the latest call_date already in the DB and only fetches newer calls.
+1. Access to Mathias's Cloudflare account (or be added as a member)
+2. The wrangler CLI installed: `npm install -g wrangler` (or use `npx wrangler` from each folder)
+3. The Hologram Cloudflare Global API Key (see `CREDENTIALS.md`)
 
-```bash
-# Dry run (no DB writes, shows what would be fetched)
-python3 backfill_gong.py --dry-run
+---
 
-# Real run
-python3 backfill_gong.py
+## Operational responsibilities post-handover
 
-# Custom window
-python3 backfill_gong.py --since 2026-01-01T00:00:00Z --until 2026-02-01T00:00:00Z
-```
+| Responsibility | Owner | Cadence |
+|---|---|---|
+| Watch daily cron health (check newest call date is <48h old) | Hologram ops or designated maintainer | Weekly spot check |
+| Rotate Mathias's Gong API key when it expires | Hologram | JWT expiry: 2035-04-19 (~9 years from now) |
+| Rotate Salesforce password / security token if Mathias's account changes | Hologram | As needed |
+| Rotate Postgres role passwords | Hologram | Quarterly best practice |
+| Re-add the Google OAuth redirect URI if the Worker URL ever changes | Whoever holds Kiln GCP access | One-time, on URL change |
+| Re-deploy after editing source code | Hologram or successor | As needed |
 
-Run on a daily cron (e.g., via system cron, n8n, or a Cloudflare scheduled trigger) to keep data fresh.
+---
 
-## OAuth gate
+## Known limitations
 
-The Worker only allows users whose Google ID token has `hd` (hosted domain) equal to `hologram.io` or `thekiln.com`. Personal Gmail and other domains are rejected with a clear 403 message.
+| Limitation | Why | Path to fix |
+|---|---|---|
+| **Salesforce auth uses SOAP login + Mathias's password** | Hologram has Connected App creation DISABLED at the org level (SF Support ticket needed to enable) | Once Hologram IT enables Connected App creation, deploy the metadata in `sf-connected-app/` and migrate `src/sf.ts` to JWT Bearer auth (~20 line swap) |
+| **No semantic search over transcripts** | Not built yet | Add pgvector + embeddings to the Supabase tables; ~1-2 day build |
+| **OpportunityContactRole is mostly empty** | Hologram reps don't populate it | Process change, not a code issue |
+| **`get_call_with_sf_context` title parser misses titles without colons** | Hologram's title format is mostly "Company: Meet with X" | Add a Lead fallback when Account search misses |
 
-To change the allowed domains, edit `ALLOWED_DOMAINS` in `src/index.ts` and redeploy.
+---
 
-## Files
+## Handover materials
 
-| File | Purpose |
-|---|---|
-| `src/index.ts` | The Worker (MCP server + OAuth wrapper) |
-| `wrangler.toml` | Cloudflare deploy config |
-| `package.json` | npm dependencies |
-| `tsconfig.json` | TypeScript config |
-| `backfill_gong.py` | Gong -> Supabase sync script |
-| `HANDOVER_CLOUDFLARE_WORKERS_MCP.md` | Full playbook for the Cloudflare Workers + remote MCP pattern (reusable for other clients/use cases) |
-| `.env.example` | Template for required environment variables |
-| `.gitignore` | Keeps secrets and build artifacts out of git |
+- **`HANDOVER.md`** — the full architecture deep-dive, migration history (Kiln CF → Hologram CF on 5/26/26), every secret + how it flows, every operational runbook. Read this if you're inheriting ownership.
+- **`CREDENTIALS.md`** — inventory of every credential the system uses, where it's stored, and exactly how to rotate it. No live values in this file (those live in Worker secrets, the Hologram Cloudflare account, and the Hologram Supabase project).
+- **Per-Worker READMEs** — deploy, tail logs, rotate secrets, local dev.
 
-## Required environment variables
+---
 
-See `.env.example`. None of these are committed to the repo. The Worker reads them at runtime via Cloudflare Worker secrets (set via `wrangler secret put`).
+## Contact
 
-## Stack
-
-- **Runtime**: Cloudflare Workers (TypeScript, V8 isolates with `nodejs_compat`)
-- **MCP transport**: Streamable HTTP (JSON-RPC 2.0)
-- **Auth**: OAuth 2.1 with Dynamic Client Registration via `@cloudflare/workers-oauth-provider`
-- **Identity provider**: Google Workspace (hd claim verification)
-- **Database**: Supabase Postgres (via Supavisor pooler, read-only role)
-- **Postgres client**: `postgres` (porsager/postgres, Workers-compatible)
-- **Backfill**: Python 3 + Gong REST API + Supabase Management API
-
-## License
-
-Internal. Built by Kiln for Hologram. Do not redistribute.
+Built by KK at The Kiln for the Hologram engagement. Post-handover, the canonical contact is `kaushik@thekiln.com`. For Hologram-internal escalations, ping Mathias Powell (`mathias.powell@hologram.io`) who owns the Cloudflare + Supabase accounts that host the system.

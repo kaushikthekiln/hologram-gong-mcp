@@ -1,7 +1,29 @@
-node_modules/
-.env
-.dev.vars
-.wrangler/
-dist/
-*.log
+# OS
 .DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+
+# Node
+node_modules/
+*.log
+
+# Cloudflare Worker
+.wrangler/
+.dev.vars
+
+# Env files containing live values
+.env
+.env.local
+.env.*.local
+
+# Salesforce private certs (regenerate per environment)
+sf-connected-app/certs/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/

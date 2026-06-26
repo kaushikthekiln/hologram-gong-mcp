@@ -2,10 +2,11 @@ name = "hologramgong"
 main = "src/index.ts"
 compatibility_date = "2024-11-12"
 compatibility_flags = ["nodejs_compat"]
+account_id = "fbaa804209ab68a25daccf0076477227"
 
 [[kv_namespaces]]
 binding = "OAUTH_KV"
-id = "6f80655459704898847b22b28f280fca"
+id = "a45d3cf019bf4dada9f782eec92b0bdc"
 
 [observability]
 enabled = true

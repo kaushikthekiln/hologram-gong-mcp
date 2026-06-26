@@ -1,11 +1,16 @@
 import { OAuthProvider } from "@cloudflare/workers-oauth-provider";
 import postgres from "postgres";
+import { SF_TOOLS, handleSfToolCall } from "./sf";
 
 interface Env {
   DATABASE_URL: string;
   GOOGLE_CLIENT_ID: string;
   GOOGLE_CLIENT_SECRET: string;
   COOKIE_ENCRYPTION_KEY: string;
+  SF_USERNAME: string;
+  SF_PASSWORD: string;
+  SF_SECURITY_TOKEN: string;
+  SF_LOGIN_URL: string;
   OAUTH_KV: KVNamespace;
   OAUTH_PROVIDER: {
     parseAuthRequest(request: Request): Promise<any>;
@@ -299,6 +304,8 @@ async function handleToolCall(
   return { content: [{ type: "text", text: `Unknown tool: ${name}` }], isError: true };
 }
 
+const SF_TOOL_NAMES = new Set(SF_TOOLS.map((t) => t.name));
+
 async function handleRpc(req: JsonRpcRequest, env: Env): Promise<JsonRpcResponse | null> {
   const id = req.id ?? null;
   const { method, params } = req;
@@ -309,13 +316,13 @@ async function handleRpc(req: JsonRpcRequest, env: Env): Promise<JsonRpcResponse
       result: {
         protocolVersion: "2025-03-26",
         capabilities: { tools: { listChanged: false } },
-        serverInfo: { name: "hologram-gong-mcp", version: "0.3.0" },
+        serverInfo: { name: "hologram-gong-mcp", version: "0.4.0" },
       },
     };
   }
   if (method === "notifications/initialized" || method === "initialized") return null;
   if (method === "ping") return { jsonrpc: "2.0", id, result: {} };
-  if (method === "tools/list") return { jsonrpc: "2.0", id, result: { tools: TOOLS } };
+  if (method === "tools/list") return { jsonrpc: "2.0", id, result: { tools: [...TOOLS, ...SF_TOOLS] } };
 
   if (method === "tools/call") {
     const sql = postgres(env.DATABASE_URL, { max: 1, idle_timeout: 5, connect_timeout: 10, prepare: false });
@@ -323,7 +330,13 @@ async function handleRpc(req: JsonRpcRequest, env: Env): Promise<JsonRpcResponse
       await sql`set local statement_timeout = '30s'`;
       const p = (params ?? {}) as { name?: string; arguments?: Record<string, unknown> };
       if (!p.name) return { jsonrpc: "2.0", id, error: { code: -32602, message: "Missing 'name'" } };
-      const result = await handleToolCall(p.name, p.arguments ?? {}, sql);
+      let result;
+      if (SF_TOOL_NAMES.has(p.name)) {
+        console.log(`[sf] tool=${p.name}`);
+        result = await handleSfToolCall(p.name, p.arguments ?? {}, env, sql as any);
+      } else {
+        result = await handleToolCall(p.name, p.arguments ?? {}, sql);
+      }
       return { jsonrpc: "2.0", id, result };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -410,11 +423,11 @@ const defaultHandler = {
         JSON.stringify({
           status: "ok",
           server: "hologram-gong-mcp",
-          version: "0.3.0",
+          version: "0.4.0",
           auth: "google-oauth",
           allowed_domains: Array.from(ALLOWED_DOMAINS),
           mcp_endpoint: `${url.origin}/sse`,
-          tools: TOOLS.map((t) => t.name),
+          tools: [...TOOLS, ...SF_TOOLS].map((t) => t.name),
         }),
         { headers: { "content-type": "application/json", ...CORS_HEADERS } }
       );

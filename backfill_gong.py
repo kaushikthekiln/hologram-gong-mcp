@@ -25,23 +25,19 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 import requests
 
-# ---------- credentials (required, from env or .env) ----------
+# ---------- credentials (read from env, fail fast if missing) ----------
 
 GONG_BASIC_AUTH = os.environ.get("GONG_BASIC_AUTH")
-SUPABASE_PROJECT_REF = os.environ.get("SUPABASE_PROJECT_REF")
+SUPABASE_PROJECT_REF = os.environ.get("SUPABASE_PROJECT_REF", "yxcnocxjqvlgtlwbwjpl")
 SUPABASE_MGMT_TOKEN = os.environ.get("SUPABASE_MGMT_TOKEN")
 
-_missing = [name for name, val in (
-    ("GONG_BASIC_AUTH", GONG_BASIC_AUTH),
-    ("SUPABASE_PROJECT_REF", SUPABASE_PROJECT_REF),
-    ("SUPABASE_MGMT_TOKEN", SUPABASE_MGMT_TOKEN),
-) if not val]
-if _missing:
-    sys.stderr.write(
-        f"Missing required env vars: {', '.join(_missing)}\n"
-        "Set them in your shell or in a .env file (see .env.example).\n"
+if not GONG_BASIC_AUTH or not SUPABASE_MGMT_TOKEN:
+    raise SystemExit(
+        "Required env vars missing.\n"
+        "  GONG_BASIC_AUTH = base64-encoded '<access_key>:<secret>' for Hologram Gong\n"
+        "  SUPABASE_MGMT_TOKEN = sbp_* personal access token for the Hologram Supabase project\n"
+        "See CREDENTIALS.md for where these values live."
     )
-    sys.exit(1)
 
 GONG_BASE = "https://api.gong.io"
 SUPABASE_SQL = f"https://api.supabase.com/v1/projects/{SUPABASE_PROJECT_REF}/database/query"
@@ -101,6 +97,8 @@ def gong_request(method: str, path: str, **kwargs) -> Dict[str, Any]:
             print(f"  Gong {r.status_code}, sleeping 5s and retrying")
             time.sleep(5)
             continue
+        if r.status_code == 404 and "no calls found" in r.text.lower():
+            return {"calls": [], "records": {}}
         if r.status_code >= 400:
             raise RuntimeError(f"Gong {method} {path} -> {r.status_code}: {r.text[:500]}")
         return r.json()

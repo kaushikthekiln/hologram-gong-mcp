@@ -1,0 +1,5 @@
+# Local-only secrets for `wrangler dev --test-scheduled` runs
+# Copy to `.dev.vars` and fill in real values; .dev.vars is gitignored.
+
+GONG_BASIC_AUTH=<base64 of "access_key:secret">
+DATABASE_URL=postgres://gong_writer.yxcnocxjqvlgtlwbwjpl:<pw>@aws-1-us-east-1.pooler.supabase.com:6543/postgres

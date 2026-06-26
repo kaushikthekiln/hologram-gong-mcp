@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ExternalClientApplication xmlns="http://soap.sforce.com/2006/04/metadata">
+    <label>Hologram Gong MCP</label>
+    <contactEmail>kaushik@thekiln.com</contactEmail>
+    <description>JWT Bearer auth for the Hologram Gong MCP Cloudflare Worker</description>
+    <distributionState>Local</distributionState>
+</ExternalClientApplication>
